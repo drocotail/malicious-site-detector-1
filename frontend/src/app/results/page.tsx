@@ -59,8 +59,8 @@ function ResultContent() {
 
     const timeout = setTimeout(() => {
       setLoading(false)
-      setError('응답 시간이 초과되었습니다. 백엔드 서버가 실행 중인지 확인해주세요.')
-    }, 30000)
+      setError('응답 시간이 초과되었습니다. 서버가 절전 상태에서 깨어나는 중일 수 있습니다. 잠시 후 다시 시도해주세요.')
+    }, 90000)
 
     scanUrl(url)
       .then(setResult)
@@ -93,7 +93,7 @@ function ResultContent() {
         <div className="text-5xl mb-6 animate-spin inline-block">⏳</div>
         <p className="text-slate-400 text-lg">AI · 규칙 기반 · 외부 API 분석 중...</p>
         <p className="text-slate-600 text-sm mt-2">{url}</p>
-        <p className="text-slate-600 text-xs mt-4">첫 실행 시 AI 모델 로딩으로 30초 이상 걸릴 수 있습니다</p>
+        <p className="text-slate-600 text-xs mt-4">서버 절전 해제 시 첫 요청은 30~60초 소요될 수 있습니다</p>
       </div>
     )
   }

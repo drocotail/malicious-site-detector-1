@@ -1,4 +1,5 @@
 import re
+import asyncio
 from datetime import datetime
 from urllib.parse import urlparse
 
@@ -60,6 +61,18 @@ def _check_domain_age(domain: str) -> dict:
     return {"creation_date": None, "age_days": None, "is_new_domain": False}
 
 
+async def _check_domain_age_async(domain: str) -> dict:
+    loop = asyncio.get_event_loop()
+    try:
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, _check_domain_age, domain),
+            timeout=5.0
+        )
+        return result
+    except asyncio.TimeoutError:
+        return {"creation_date": None, "age_days": None, "is_new_domain": False}
+
+
 def _check_url_structure(url: str, domain: str) -> list[str]:
     flags = []
     if len(url) > 120:
@@ -78,7 +91,7 @@ async def analyze_domain(url: str) -> dict:
     domain = extract_domain(url)
     impersonation = _check_impersonation(domain)
     suspicious_tld = _check_suspicious_tld(domain)
-    domain_age = _check_domain_age(domain)
+    domain_age = await _check_domain_age_async(domain)
     url_flags = _check_url_structure(url, domain)
 
     is_suspicious = bool(impersonation or suspicious_tld or domain_age["is_new_domain"] or url_flags)

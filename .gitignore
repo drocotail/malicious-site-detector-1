@@ -1,0 +1,42 @@
+# 환경변수 (절대 커밋 금지)
+.env
+*.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# 데이터베이스
+*.db
+*.sqlite3
+
+# ML 모델 (200MB 초과 - GitHub 업로드 불가, 배포 시 자동 재학습)
+*.pkl
+*.joblib
+
+# Node.js
+node_modules/
+.next/
+.vercel/
+out/
+
+# 로그
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

@@ -1,14 +1,24 @@
 """
 판정 엔진 - URL 안전 여부를 결정하는 핵심 로직
 
+판정 체계는 두 단계로 분리된다:
+
+[API 직접 탐지 체계 — STEP 1~4]
+  신뢰도 높은 외부 위협 인텔리전스(GSB·VT·PhishTank)가 탐지한 경우 즉시 위험 판정.
+  임계값: VirusTotal 30% 이상 엔진 탐지, GSB 일치, PhishTank 검증 피싱
+
+[ML + 도메인 합산 점수 체계 — STEP 5~8]
+  외부 API를 통과한 미탐지(unknown) URL에 대해 도메인 분석과 ML 보조 신호로 판정.
+  combined_risk 임계값: ≥ 70 → 위험, 25~69 → 의심, 0~24 → 안전
+
 흐름:
   1. 화이트리스트 확인 (공식 도메인 → 즉시 안전 반환)
   2. 자체 DB 확인 (확정 피싱 → 즉시 위험 반환)
   3. Google Safe Browsing + VirusTotal + PhishTank 병렬 조회
-  4. API가 위험/피싱 판정 → DB 저장 후 반환
-  5. API 통과 시 → 도메인 분석 + ML 모델 병렬 실행
-  6. 의심 징후 발견 → DB 저장 후 반환
-  7. DB에 이미 의심으로 등록된 도메인 → 의심 반환
+  4. API 탐지 결과 종합 → 임계값 초과 시 위험 반환 (API 직접 탐지 체계)
+  5. 도메인 분석 + ML 모델 병렬 실행
+  6. combined_risk ≥ 70 → 위험 반환 (ML+도메인 합산 체계)
+  7. combined_risk ≥ 25 → 의심 반환 (ML+도메인 합산 체계)
   8. 모두 통과 → 안전 반환
 """
 
@@ -41,6 +51,20 @@ WHITELIST_DOMAINS = {
     "samsung.com", "lge.com", "hyundai.com",
     "go.kr", "or.kr", "ac.kr",
 }
+
+# ── API 직접 탐지 체계 임계값 ──────────────────────────────────────────────────
+# GSB 탐지 시 부여하는 최소 위험 점수 (≥ VT_DANGER_THRESHOLD이면 위험 판정)
+_GSB_HIT_SCORE = 70
+# VirusTotal: 전체 엔진 대비 악성 판정 비율(%) 임계값. 30% 이상이면 위험 판정.
+_VT_DANGER_THRESHOLD = 30
+# PhishTank 검증 피싱 확정 점수
+_PT_HIT_SCORE = 100
+# API 체계 최종 위험 판정 임계값
+_API_DANGER_CUTOFF = 30
+
+# ── ML+도메인 합산 점수 체계 임계값 ───────────────────────────────────────────
+_ML_DOMAIN_DANGER = 70   # combined_risk ≥ 이 값 → 위험
+_ML_DOMAIN_SUSPICIOUS = 25  # combined_risk ≥ 이 값 → 의심
 
 
 def _is_whitelisted(domain: str) -> bool:
@@ -80,7 +104,7 @@ async def scan_url(url: str, db: Session) -> dict:
             },
         )
 
-    # Step 3: 외부 API 3종 병렬 조회
+    # Step 3: 외부 API 3종 병렬 조회 (graceful degradation: 개별 API 실패 시 안전으로 처리)
     sb_result, vt_result, pt_result = await asyncio.gather(
         check_safe_browsing(url),
         check_virustotal(url),
@@ -95,36 +119,42 @@ async def scan_url(url: str, db: Session) -> dict:
     if isinstance(pt_result, Exception):
         pt_result = {"available": False, "is_phishing": False, "error": str(pt_result)}
 
-    # Step 4: API 결과 종합
+    # Step 4: API 직접 탐지 체계 — 신뢰도 높은 위협 인텔리전스 결과 종합
     api_threats: list[str] = []
-    risk_score = 0
+    api_risk_score = 0  # API 체계 전용 점수 (≥ _API_DANGER_CUTOFF이면 즉시 위험)
 
     if not sb_result.get("is_safe", True):
         api_threats.extend(sb_result.get("threats", []))
-        risk_score = max(risk_score, 70)
+        api_risk_score = max(api_risk_score, _GSB_HIT_SCORE)
 
     if not vt_result.get("is_safe", True):
         malicious = vt_result.get("malicious_count", 0)
         total = vt_result.get("total_engines", 1) or 1
-        risk_score = max(risk_score, int((malicious / total) * 100))
+        vt_score = int((malicious / total) * 100)  # 탐지 엔진 비율을 점수화
+        api_risk_score = max(api_risk_score, vt_score)
         api_threats.extend(vt_result.get("threats", []))
 
     # PhishTank: verified + valid 둘 다 true여야 확정 피싱
     if pt_result.get("is_phishing"):
         api_threats.append("PHISHTANK_VERIFIED_PHISHING")
-        risk_score = max(risk_score, 100)
+        api_risk_score = max(api_risk_score, _PT_HIT_SCORE)
 
-    if risk_score >= 30:
+    if api_risk_score >= _API_DANGER_CUTOFF:
         _save_to_db(url, domain, "confirmed_phishing", "api_detection", list(set(api_threats)), db)
         return _verdict(
-            "dangerous", min(risk_score, 100),
+            "dangerous", min(api_risk_score, 100),
             list(set(api_threats)),
-            {"safe_browsing": sb_result, "virustotal": vt_result, "phishtank": pt_result},
+            {
+                "scoring_system": "api_direct_detection",
+                "safe_browsing": sb_result,
+                "virustotal": vt_result,
+                "phishtank": pt_result,
+            },
         )
 
-    # Step 5: 도메인 분석 + ML 병렬 실행
+    # Step 5: ML+도메인 합산 점수 체계 — 미탐지 URL에 대한 보조 신호 분석
     domain_analysis = await analyze_domain(url)
-    ml_result = ml_predict(url)
+    ml_result = ml_predict(url)  # ML은 주력이 아닌 신종 URL 보조 탐지 신호
 
     sus_threats: list[str] = []
     domain_risk = 0
@@ -149,6 +179,7 @@ async def scan_url(url: str, db: Session) -> dict:
         sus_threats.append(flag)
         domain_risk += 10
 
+    # ML 보조 신호: ml_score ≥ 70일 때만 domain_risk에 가산
     if ml_result and ml_result["ml_score"] >= 70:
         sus_threats.append("ML_PHISHING_DETECTED")
         domain_risk += int(ml_result["ml_score"] * 0.3)
@@ -156,6 +187,7 @@ async def scan_url(url: str, db: Session) -> dict:
     combined_risk = min(domain_risk, 95)
 
     details = {
+        "scoring_system": "ml_domain_combined",
         "safe_browsing": sb_result,
         "virustotal": vt_result,
         "phishtank": pt_result,
@@ -163,11 +195,13 @@ async def scan_url(url: str, db: Session) -> dict:
         "ml": ml_result,
     }
 
-    if combined_risk >= 70:
+    # Step 6: combined_risk ≥ 70 → 위험 (ML+도메인 체계)
+    if combined_risk >= _ML_DOMAIN_DANGER:
         _save_to_db(url, domain, "confirmed_phishing", "auto_detected", list(set(sus_threats)), db)
         return _verdict("dangerous", combined_risk, list(set(sus_threats)), details)
 
-    if combined_risk >= 25:
+    # Step 7: combined_risk ≥ 25 → 의심 (ML+도메인 체계)
+    if combined_risk >= _ML_DOMAIN_SUSPICIOUS:
         _save_to_db(url, domain, "suspicious", "auto_detected", list(set(sus_threats)), db)
         return _verdict("suspicious", combined_risk, list(set(sus_threats)), details)
 
@@ -179,7 +213,8 @@ async def scan_url(url: str, db: Session) -> dict:
              "safe_browsing": sb_result, "virustotal": vt_result, "phishtank": pt_result},
         )
 
-    return _verdict("safe", max(risk_score, 0), [], details)
+    # Step 8: 모두 통과 → 안전
+    return _verdict("safe", max(api_risk_score, 0), [], details)
 
 
 def _lookup_db(domain: str, db: Session) -> dict | None:

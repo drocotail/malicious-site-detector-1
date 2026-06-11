@@ -13,7 +13,7 @@ from app.models.scan import ScanHistory
 from app.models.user import User
 from app.services.domain_analyzer import extract_domain
 from app.services.verdict_engine import scan_url as _engine_scan
-from app.services.url_expander import expand_url
+from app.services.url_expander import expand_url, is_shortener
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -158,6 +158,29 @@ async def scan(
     final, is_shortened = await expand_url(normalized)
     expanded_url: str | None = final if is_shortened else None
     scan_target = final if is_shortened else normalized
+
+    # 알려진 단축 서비스 도메인인데 최종 URL 추적에 실패한 경우 → 목적지 불명 "주의" 반환
+    if is_shortener(normalized) and not is_shortened:
+        result = {
+            "verdict": "suspicious",
+            "risk_score": 30,
+            "threat_types": ["UNRESOLVED_SHORTENER"],
+            "details": {
+                "source": "shortener_detection",
+                "note": "단축 URL의 최종 목적지를 확인할 수 없습니다.",
+            },
+        }
+        db.add(ScanHistory(
+            user_id=current_user.id if current_user else None,
+            url=normalized,
+            domain=extract_domain(normalized),
+            verdict="suspicious",
+            risk_score=30,
+            threat_types=["UNRESOLVED_SHORTENER"],
+            details=result["details"],
+        ))
+        db.commit()
+        return _transform_response(url, normalized, result, None)
 
     result = await _engine_scan(scan_target, db)
 

@@ -1,3 +1,11 @@
+"""Google Safe Browsing API 연동 서비스.
+
+⚠ 라이선스 주의:
+  - Safe Browsing API (v4/v5)는 비상업적 용도 전용이다.
+  - 상업적 서비스화 시 유료 Web Risk API(cloud.google.com/web-risk)로 전환해야 한다.
+  - v4는 deprecated 상태이며 공식 후속은 v5. 코드는 v5 우선, 실패 시 v4 폴백 구조.
+"""
+
 import httpx
 from app.config import settings
 

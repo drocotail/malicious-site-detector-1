@@ -1,15 +1,5 @@
 import re
-import asyncio
-import socket
-from datetime import datetime
 from urllib.parse import urlparse
-
-import whois
-
-# whois 라이브러리는 소켓에 자체 타임아웃을 설정하지 않아,
-# 응답 없는 WHOIS 서버에 무한정 블로킹될 수 있다.
-# (프로세스가 멈춰 Render에서 OOM/헬스체크로 재시작되는 원인이 됨)
-socket.setdefaulttimeout(2.0)
 
 # 유명 브랜드 사칭 패턴 (도메인에서 탐지)
 IMPERSONATION_PATTERNS = [
@@ -49,36 +39,6 @@ def _check_suspicious_tld(domain: str) -> bool:
     return any(domain.endswith(tld) for tld in SUSPICIOUS_TLDS)
 
 
-def _check_domain_age(domain: str) -> dict:
-    try:
-        info = whois.whois(domain)
-        created = info.creation_date
-        if isinstance(created, list):
-            created = created[0]
-        if created:
-            age_days = (datetime.now() - created).days
-            return {
-                "creation_date": created.isoformat(),
-                "age_days": age_days,
-                "is_new_domain": age_days < 30,
-            }
-    except Exception:
-        pass
-    return {"creation_date": None, "age_days": None, "is_new_domain": False}
-
-
-async def _check_domain_age_async(domain: str) -> dict:
-    loop = asyncio.get_event_loop()
-    try:
-        result = await asyncio.wait_for(
-            loop.run_in_executor(None, _check_domain_age, domain),
-            timeout=3.0
-        )
-        return result
-    except asyncio.TimeoutError:
-        return {"creation_date": None, "age_days": None, "is_new_domain": False}
-
-
 def _check_url_structure(url: str, domain: str) -> list[str]:
     flags = []
     if len(url) > 120:
@@ -97,10 +57,12 @@ async def analyze_domain(url: str) -> dict:
     domain = extract_domain(url)
     impersonation = _check_impersonation(domain)
     suspicious_tld = _check_suspicious_tld(domain)
-    domain_age = await _check_domain_age_async(domain)
+    # whois 조회는 응답 없는 서버에서 ~10초씩 블로킹되어 Render 인스턴스를
+    # OOM/재시작시키는 원인이 되어 제거함. domain_age는 항상 미확인으로 처리.
+    domain_age = {"creation_date": None, "age_days": None, "is_new_domain": False}
     url_flags = _check_url_structure(url, domain)
 
-    is_suspicious = bool(impersonation or suspicious_tld or domain_age["is_new_domain"] or url_flags)
+    is_suspicious = bool(impersonation or suspicious_tld or url_flags)
 
     return {
         "domain": domain,

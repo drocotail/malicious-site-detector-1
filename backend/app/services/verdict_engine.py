@@ -14,7 +14,7 @@
 흐름:
   1. 화이트리스트 확인 (공식 도메인 → 즉시 안전 반환)
   2. 자체 DB 확인 (확정 피싱 → 즉시 위험 반환)
-  3. Google Safe Browsing + VirusTotal + PhishTank + 도메인 분석(whois) 병렬 조회
+  3. Google Safe Browsing + VirusTotal + PhishTank + 도메인 분석 병렬 조회
   4. API 탐지 결과 종합 → 임계값 초과 시 위험 반환 (API 직접 탐지 체계)
   5. ML 모델 실행 (도메인 분석은 3단계에서 이미 완료)
   6. combined_risk ≥ 70 → 위험 반환 (ML+도메인 합산 체계)
@@ -104,7 +104,7 @@ async def scan_url(url: str, db: Session) -> dict:
             },
         )
 
-    # Step 3: 외부 API 3종 + 도메인 분석(whois 등) 병렬 조회
+    # Step 3: 외부 API 3종 + 도메인 분석 병렬 조회
     # (Vercel 서버리스 함수의 10초 타임아웃을 피하기 위해 순차 실행하지 않고 함께 실행)
     sb_result, vt_result, pt_result, domain_analysis = await asyncio.gather(
         check_safe_browsing(url),

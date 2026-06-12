@@ -66,7 +66,7 @@ async def _check_domain_age_async(domain: str) -> dict:
     try:
         result = await asyncio.wait_for(
             loop.run_in_executor(None, _check_domain_age, domain),
-            timeout=5.0
+            timeout=3.0
         )
         return result
     except asyncio.TimeoutError:

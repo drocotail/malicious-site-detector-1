@@ -29,7 +29,7 @@ async def check_safe_browsing(url: str) -> dict:
 async def _check_v5(url: str) -> dict | None:
     """v5alpha1: GET 방식, $alt=json으로 JSON 강제."""
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=3.0) as client:
             resp = await client.get(
                 SB_V5_URL,
                 params={
@@ -83,7 +83,7 @@ async def _check_v4(url: str) -> dict:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=3.0) as client:
             resp = await client.post(
                 f"{SB_V4_URL}?key={settings.google_safe_browsing_api_key}",
                 json=payload,

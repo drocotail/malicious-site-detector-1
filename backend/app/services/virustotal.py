@@ -24,7 +24,7 @@ async def check_virustotal(url: str) -> dict:
     headers = {"x-apikey": settings.virustotal_api_key}
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=4.0) as client:
             resp = await client.get(f"{VT_BASE}/urls/{_url_id(url)}", headers=headers)
 
             if resp.status_code == 404:

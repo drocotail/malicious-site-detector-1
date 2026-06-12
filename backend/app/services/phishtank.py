@@ -28,7 +28,7 @@ async def _refresh_openphish() -> None:
         if time.time() - _openphish_last_update < _CACHE_TTL:
             return
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=4.0) as client:
                 resp = await client.get(OPENPHISH_FEED)
             if resp.status_code == 200:
                 _openphish_cache = {
@@ -70,7 +70,7 @@ async def check_phishtank(url: str) -> dict:
         payload["app_key"] = settings.phishtank_app_key
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=4.0) as client:
             resp = await client.post(
                 PHISHTANK_ENDPOINT,
                 data=payload,

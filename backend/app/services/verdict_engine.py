@@ -14,9 +14,9 @@
 흐름:
   1. 화이트리스트 확인 (공식 도메인 → 즉시 안전 반환)
   2. 자체 DB 확인 (확정 피싱 → 즉시 위험 반환)
-  3. Google Safe Browsing + VirusTotal + PhishTank 병렬 조회
+  3. Google Safe Browsing + VirusTotal + PhishTank + 도메인 분석(whois) 병렬 조회
   4. API 탐지 결과 종합 → 임계값 초과 시 위험 반환 (API 직접 탐지 체계)
-  5. 도메인 분석 + ML 모델 병렬 실행
+  5. ML 모델 실행 (도메인 분석은 3단계에서 이미 완료)
   6. combined_risk ≥ 70 → 위험 반환 (ML+도메인 합산 체계)
   7. combined_risk ≥ 25 → 의심 반환 (ML+도메인 합산 체계)
   8. 모두 통과 → 안전 반환
@@ -104,11 +104,13 @@ async def scan_url(url: str, db: Session) -> dict:
             },
         )
 
-    # Step 3: 외부 API 3종 병렬 조회 (graceful degradation: 개별 API 실패 시 안전으로 처리)
-    sb_result, vt_result, pt_result = await asyncio.gather(
+    # Step 3: 외부 API 3종 + 도메인 분석(whois 등) 병렬 조회
+    # (Vercel 서버리스 함수의 10초 타임아웃을 피하기 위해 순차 실행하지 않고 함께 실행)
+    sb_result, vt_result, pt_result, domain_analysis = await asyncio.gather(
         check_safe_browsing(url),
         check_virustotal(url),
         check_phishtank(url),
+        analyze_domain(url),
         return_exceptions=True,
     )
 
@@ -118,6 +120,13 @@ async def scan_url(url: str, db: Session) -> dict:
         vt_result = {"is_safe": True, "threats": [], "malicious_count": 0, "error": str(vt_result)}
     if isinstance(pt_result, Exception):
         pt_result = {"available": False, "is_phishing": False, "error": str(pt_result)}
+    if isinstance(domain_analysis, Exception):
+        domain_analysis = {
+            "domain": domain, "is_suspicious": False,
+            "impersonation_patterns": [], "suspicious_tld": False,
+            "domain_age": {"creation_date": None, "age_days": None, "is_new_domain": False},
+            "url_structure_flags": [],
+        }
 
     # Step 4: API 직접 탐지 체계 — 신뢰도 높은 위협 인텔리전스 결과 종합
     api_threats: list[str] = []
@@ -153,7 +162,6 @@ async def scan_url(url: str, db: Session) -> dict:
         )
 
     # Step 5: ML+도메인 합산 점수 체계 — 미탐지 URL에 대한 보조 신호 분석
-    domain_analysis = await analyze_domain(url)
     ml_result = ml_predict(url)  # ML은 주력이 아닌 신종 URL 보조 탐지 신호
 
     sus_threats: list[str] = []

@@ -1,9 +1,15 @@
 import re
 import asyncio
+import socket
 from datetime import datetime
 from urllib.parse import urlparse
 
 import whois
+
+# whois 라이브러리는 소켓에 자체 타임아웃을 설정하지 않아,
+# 응답 없는 WHOIS 서버에 무한정 블로킹될 수 있다.
+# (프로세스가 멈춰 Render에서 OOM/헬스체크로 재시작되는 원인이 됨)
+socket.setdefaulttimeout(2.0)
 
 # 유명 브랜드 사칭 패턴 (도메인에서 탐지)
 IMPERSONATION_PATTERNS = [

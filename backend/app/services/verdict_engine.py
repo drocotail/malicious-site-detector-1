@@ -65,6 +65,7 @@ _API_DANGER_CUTOFF = 30
 # ── ML+도메인 합산 점수 체계 임계값 ───────────────────────────────────────────
 _ML_DOMAIN_DANGER = 70   # combined_risk ≥ 이 값 → 위험
 _ML_DOMAIN_SUSPICIOUS = 25  # combined_risk ≥ 이 값 → 의심
+_ML_WEIGHT = 0.5  # ML 점수 반영 비율 (ml_score ≥ 70일 때만 적용)
 
 
 def _is_whitelisted(domain: str) -> bool:
@@ -188,9 +189,11 @@ async def scan_url(url: str, db: Session) -> dict:
         domain_risk += 10
 
     # ML 보조 신호: ml_score ≥ 70일 때만 domain_risk에 가산
+    # 가중치 0.3 → 0.5: 기존에는 ML이 78% 피싱으로 판단해도 23점(<25)이라 '안전'으로 판정됨.
+    # 0.5 적용 시 ML 단독 70~100% → 35~50점('의심'), 다른 도메인 신호와 결합 시 '위험' 가능.
     if ml_result and ml_result["ml_score"] >= 70:
         sus_threats.append("ML_PHISHING_DETECTED")
-        domain_risk += int(ml_result["ml_score"] * 0.3)
+        domain_risk += int(ml_result["ml_score"] * _ML_WEIGHT)
 
     combined_risk = min(domain_risk, 95)
 

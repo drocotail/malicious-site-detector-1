@@ -76,9 +76,9 @@ def train(csv_path: str) -> None:
     model = Pipeline([
         ("scaler", StandardScaler()),
         ("clf", RandomForestClassifier(
-            n_estimators=200,
-            max_depth=20,
-            min_samples_leaf=2,
+            n_estimators=60,   # Render 무료 서버 메모리(512MB) 대응: 200 → 60
+            max_depth=12,      # 20 → 12
+            min_samples_leaf=10,  # 2 → 10
             class_weight="balanced",  # 피싱 데이터 불균형 보정
             random_state=42,
             n_jobs=-1,

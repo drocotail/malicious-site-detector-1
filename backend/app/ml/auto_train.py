@@ -6,6 +6,7 @@
 """
 
 import io
+import json
 import os
 import pickle
 
@@ -13,7 +14,10 @@ import numpy as np
 import pandas as pd
 import urllib.request
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score, classification_report, confusion_matrix, f1_score,
+    precision_score, recall_score, roc_auc_score,
+)
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -21,6 +25,7 @@ from sklearn.preprocessing import StandardScaler
 from app.ml.features import extract, FEATURE_NAMES
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "saved_model", "phishing_model.pkl")
+METRICS_PATH = os.path.join(os.path.dirname(__file__), "saved_model", "metrics.json")
 
 DATASET_URL = (
     "https://raw.githubusercontent.com/"
@@ -116,12 +121,14 @@ def train(X: np.ndarray, y: np.ndarray) -> Pipeline:
         X, y, test_size=0.2, random_state=42, stratify=y
     )
 
+    # Render 무료 서버(메모리 512MB)에서 모델 로드 시 OOM으로 서버가 죽는 문제 해결:
+    # 기존 200개 트리·깊이 20(약 200MB) → 60개 트리·깊이 12·리프 최소 10개로 축소 (수십 MB 이하)
     model = Pipeline([
         ("scaler", StandardScaler()),
         ("clf", RandomForestClassifier(
-            n_estimators=200,
-            max_depth=20,
-            min_samples_leaf=2,
+            n_estimators=60,
+            max_depth=12,
+            min_samples_leaf=10,
             class_weight="balanced",
             random_state=42,
             n_jobs=-1,
@@ -137,6 +144,24 @@ def train(X: np.ndarray, y: np.ndarray) -> Pipeline:
     print("\n=== 평가 결과 ===")
     print(classification_report(y_te, y_pred, target_names=["정상", "피싱"]))
     print(f"AUC-ROC: {roc_auc_score(y_te, y_prob):.4f}")
+
+    # 테스트셋 기준 핵심 지표 (패널·발표용 수치)
+    tn, fp, fn, tp = confusion_matrix(y_te, y_pred, labels=[0, 1]).ravel()
+    metrics = {
+        "test_size": int(len(y_te)),
+        "accuracy": round(accuracy_score(y_te, y_pred), 4),
+        "precision": round(precision_score(y_te, y_pred, zero_division=0), 4),
+        "recall": round(recall_score(y_te, y_pred, zero_division=0), 4),
+        "f1": round(f1_score(y_te, y_pred, zero_division=0), 4),
+        "false_positive_rate": round(fp / (fp + tn), 4) if (fp + tn) else 0.0,
+        "auc_roc": round(roc_auc_score(y_te, y_prob), 4),
+    }
+    print("\n=== 핵심 지표 (METRICS) ===")
+    for k, v in metrics.items():
+        print(f"  {k}: {v}")
+    os.makedirs(os.path.dirname(METRICS_PATH), exist_ok=True)
+    with open(METRICS_PATH, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, ensure_ascii=False, indent=2)
 
     clf = model.named_steps["clf"]
     importances = sorted(zip(FEATURE_NAMES, clf.feature_importances_), key=lambda x: -x[1])
@@ -161,7 +186,8 @@ def main():
 
     with open(MODEL_PATH, "wb") as f:
         pickle.dump(model, f)
-    print(f"\n모델 저장 완료: {MODEL_PATH}")
+    size_mb = os.path.getsize(MODEL_PATH) / 1024 / 1024
+    print(f"\n모델 저장 완료: {MODEL_PATH} ({size_mb:.1f} MB)")
     print("백엔드를 재시작하면 모델이 자동으로 로드됩니다.")
 
 

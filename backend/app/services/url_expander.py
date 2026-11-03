@@ -50,6 +50,25 @@ _META_REFRESH_RE2 = re.compile(  # content 속성이 http-equiv보다 앞에 오
     r"""<meta[^>]+content\s*=\s*["'][^"']*?url\s*=\s*['"]?([^"'>\s]+)[^>]*http-equiv\s*=\s*["']?refresh""",
     re.I,
 )
+# 중간 안내(인터스티셜) 페이지: "이동하려는 URL: https://..." 처럼 목적지를 글로 보여주고
+# '바로가기' 버튼을 눌러야 이동하는 방식 (예: url.kr의 '사이트 안전성 체크' 페이지)
+_LABELED_DEST_RE = re.compile(
+    r"(?:이동하려는\s*URL|이동할\s*(?:주소|URL)|목적지|원본\s*(?:주소|URL)|연결(?:될|할)\s*(?:주소|URL)"
+    r"|destination|redirecting\s+to|you\s+are\s+being\s+redirected)"
+    r"[\s\S]{0,400}?(https?://[^\s<>\"']+)",
+    re.I,
+)
+_GO_BUTTON_RE = re.compile(
+    r"""<a\b[^>]*href\s*=\s*["'](https?://[^"']+)["'][^>]*>(?:(?!</a>)[\s\S]){0,300}?"""
+    r"""(?:바로\s*가기|바로\s*이동|이동하기|계속\s*하기|사이트로\s*이동|continue|proceed|go\s+to|visit)""",
+    re.I,
+)
+# 안내 페이지에 함께 있는 광고·운영사 링크는 목적지 후보에서 제외
+_NOISE_DOMAINS = (
+    "kakao.com", "doubleclick.net", "googlesyndication.com", "google.com", "googletagmanager.com",
+    "coupang.com", "link.coupang.com", "facebook.com", "twitter.com", "instagram.com", "webworks.co.kr",
+)
+
 _JS_REDIRECT_RE = re.compile(
     r"""(?:window\.|document\.|top\.|self\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']"""
     r"""|location\.(?:replace|assign)\(\s*["']([^"']+)["']\s*\)""",
@@ -84,7 +103,21 @@ def _extract_in_page_redirect(html: str, base_url: str) -> str | None:
         target = urljoin(base_url, unescape(raw).strip())
         if target.startswith(("http://", "https://")) and _domain(target) != _domain(base_url):
             return target
+    # 중간 안내 페이지: "이동하려는 URL" 같은 표시 문구 뒤의 주소 → '바로가기' 버튼 링크 순서로 확인
+    for pattern in (_LABELED_DEST_RE, _GO_BUTTON_RE):
+        for m in pattern.finditer(html):
+            target = unescape(m.group(1)).strip().rstrip(".,);")
+            if _is_candidate(target, base_url):
+                return target
     return None
+
+
+def _is_candidate(target: str, base_url: str) -> bool:
+    """안내 페이지에서 찾은 주소가 실제 목적지 후보인지 (자기 도메인·광고·운영사 링크 제외)."""
+    d = _domain(target)
+    if not d or d == _domain(base_url):
+        return False
+    return not any(d == n or d.endswith("." + n) for n in _NOISE_DOMAINS)
 
 
 async def _is_safe_host(url: str) -> bool:

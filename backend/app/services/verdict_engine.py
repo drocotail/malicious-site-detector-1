@@ -28,7 +28,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.models.malicious_site import MaliciousSite
-from app.services.domain_analyzer import analyze_domain, extract_domain
+from app.services.domain_analyzer import analyze_domain, extract_domain, strip_query
 from app.services.safe_browsing import check_safe_browsing
 from app.services.virustotal import check_virustotal
 from app.services.phishtank import check_phishtank
@@ -66,6 +66,7 @@ _API_DANGER_CUTOFF = 30
 _ML_DOMAIN_DANGER = 70   # combined_risk ≥ 이 값 → 위험
 _ML_DOMAIN_SUSPICIOUS = 25  # combined_risk ≥ 이 값 → 의심
 _ML_WEIGHT = 0.5  # ML 점수 반영 비율 (ml_score ≥ 70일 때만 적용)
+_LONG_URL_SCORE = 5  # 긴 URL(쿼리 제외 120자 초과) 가산점 (기존 10)
 
 
 def _is_whitelisted(domain: str) -> bool:
@@ -163,7 +164,10 @@ async def scan_url(url: str, db: Session) -> dict:
         )
 
     # Step 5: ML+도메인 합산 점수 체계 — 미탐지 URL에 대한 보조 신호 분석
-    ml_result = ml_predict(url)  # ML은 주력이 아닌 신종 URL 보조 탐지 신호
+    # ML은 주력이 아닌 신종 URL 보조 탐지 신호.
+    # 쿼리스트링(추적 파라미터 등)은 길이·특수문자·숫자 비율 특징을 부풀려 정상 URL을
+    # 피싱으로 오판하게 만들므로, 스킴·호스트·경로만으로 예측한다.
+    ml_result = ml_predict(strip_query(url))
 
     sus_threats: list[str] = []
     domain_risk = 0
@@ -186,7 +190,8 @@ async def scan_url(url: str, db: Session) -> dict:
 
     for flag in domain_analysis["url_structure_flags"]:
         sus_threats.append(flag)
-        domain_risk += 10
+        # 긴 URL은 단독으로는 약한 신호라 5점, 나머지 구조 신호(@, IP, 과다 서브도메인)는 10점
+        domain_risk += _LONG_URL_SCORE if flag == "EXCESSIVE_URL_LENGTH" else 10
 
     # ML 보조 신호: ml_score ≥ 70일 때만 domain_risk에 가산
     # 가중치 0.3 → 0.5: 기존에는 ML이 78% 피싱으로 판단해도 23점(<25)이라 '안전'으로 판정됨.

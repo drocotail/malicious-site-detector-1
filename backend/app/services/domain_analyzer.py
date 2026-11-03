@@ -3,7 +3,7 @@ import ipaddress
 import re
 import time
 from datetime import datetime, timezone
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 import httpx
 
@@ -142,6 +142,15 @@ async def get_domain_age(domain: str) -> dict:
     }
 
 
+def strip_query(url: str) -> str:
+    """URL에서 쿼리스트링과 프래그먼트를 제거 (스킴·호스트·경로만 남김)."""
+    try:
+        p = urlsplit(url if url.startswith("http") else f"http://{url}")
+        return urlunsplit((p.scheme, p.netloc, p.path, "", ""))
+    except ValueError:
+        return url
+
+
 def extract_domain(url: str) -> str:
     try:
         parsed = urlparse(url if url.startswith("http") else f"http://{url}")
@@ -160,7 +169,9 @@ def _check_suspicious_tld(domain: str) -> bool:
 
 def _check_url_structure(url: str, domain: str) -> list[str]:
     flags = []
-    if len(url) > 120:
+    # 길이는 쿼리스트링(? 뒤)·프래그먼트(# 뒤)를 제외하고 측정.
+    # 쇼핑몰·광고 추적 파라미터(src=, ctag= 등)로 길어진 정상 URL의 오탐 방지.
+    if len(strip_query(url)) > 120:
         flags.append("EXCESSIVE_URL_LENGTH")
     if "@" in url:
         flags.append("AT_SIGN_IN_URL")

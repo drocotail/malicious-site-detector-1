@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import {
-  getAdminSites, addAdminSite, updateAdminSite, deleteAdminSite,
+  getAdminSites, addAdminSite, updateAdminSite, deleteAdminSite, markSiteSafe,
   AdminSite, extractAdminError,
 } from '@/lib/adminApi'
 
@@ -11,12 +11,14 @@ const CATEGORY_LABELS: Record<string, string> = {
   suspicious: '의심',
   malware: '악성코드',
   user_reported: '제보',
+  admin_safe: '안전 (관리자)',
 }
 const CATEGORY_COLORS: Record<string, string> = {
   confirmed_phishing: 'bg-red-950 text-red-300 border-red-800',
   suspicious: 'bg-yellow-950 text-yellow-300 border-yellow-800',
   malware: 'bg-orange-950 text-orange-300 border-orange-800',
   user_reported: 'bg-blue-950 text-blue-300 border-blue-800',
+  admin_safe: 'bg-green-950 text-green-300 border-green-800',
 }
 
 function timeAgo(iso: string) {
@@ -33,6 +35,9 @@ export default function AdminSitesPage() {
   const [form, setForm] = useState({ url: '', domain: '', category: 'confirmed_phishing', threat_types: '' })
   const [formError, setFormError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [showSafe, setShowSafe] = useState(false)
+  const [safeDomain, setSafeDomain] = useState('')
+  const [notice, setNotice] = useState('')
 
   const load = () => {
     setLoading(true)
@@ -46,7 +51,9 @@ export default function AdminSitesPage() {
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.url.trim() || !form.domain.trim()) { setFormError('URL과 도메인을 입력해주세요.'); return }
+    if (!form.domain.trim() || (form.category !== 'admin_safe' && !form.url.trim())) {
+      setFormError('URL과 도메인을 입력해주세요.'); return
+    }
     setSubmitting(true)
     setFormError('')
     try {
@@ -67,8 +74,26 @@ export default function AdminSitesPage() {
   }
 
   const handleCategoryChange = async (id: number, category: string) => {
-    await updateAdminSite(id, category)
-    setSites((prev) => prev.map((s) => s.id === id ? { ...s, category } : s))
+    try {
+      await updateAdminSite(id, category)
+      setSites((prev) => prev.map((s) => s.id === id ? { ...s, category } : s))
+      if (category === 'admin_safe') setNotice('안전으로 분류했습니다. 하위 도메인도 함께 안전으로 판정됩니다.')
+    } catch (err) {
+      setNotice(extractAdminError(err, '분류 변경에 실패했습니다.'))
+    }
+  }
+
+  const handleMarkSafe = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!safeDomain.trim()) return
+    try {
+      setNotice(await markSiteSafe(safeDomain.trim()))
+      setSafeDomain('')
+      setShowSafe(false)
+      load()
+    } catch (err) {
+      setNotice(extractAdminError(err, '안전 분류에 실패했습니다.'))
+    }
   }
 
   const handleDelete = async (id: number) => {
@@ -84,13 +109,48 @@ export default function AdminSitesPage() {
           <h1 className="text-2xl font-bold text-white">악성 사이트 관리</h1>
           <p className="text-slate-500 text-sm mt-1">총 {sites.length}개 등록됨</p>
         </div>
-        <button
-          onClick={() => { setShowAdd(!showAdd); setFormError('') }}
-          className="bg-red-600 hover:bg-red-500 text-white text-sm font-medium px-5 py-2.5 rounded-xl transition-colors"
-        >
-          + 사이트 추가
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => { setShowSafe(!showSafe); setShowAdd(false) }}
+            className="bg-green-700 hover:bg-green-600 text-white text-sm font-medium px-5 py-2.5 rounded-xl transition-colors"
+          >
+            + 안전 사이트 등록
+          </button>
+          <button
+            onClick={() => { setShowAdd(!showAdd); setShowSafe(false); setFormError('') }}
+            className="bg-red-600 hover:bg-red-500 text-white text-sm font-medium px-5 py-2.5 rounded-xl transition-colors"
+          >
+            + 사이트 추가
+          </button>
+        </div>
       </div>
+
+      {notice && (
+        <div className="mb-4 flex items-center justify-between bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-4 py-2.5">
+          <span>{notice}</span>
+          <button onClick={() => setNotice('')} className="text-slate-500 hover:text-white">닫기</button>
+        </div>
+      )}
+
+      {showSafe && (
+        <form onSubmit={handleMarkSafe} className="bg-slate-900 border border-green-800 rounded-xl p-5 mb-6 space-y-3">
+          <h2 className="text-sm font-semibold text-green-300">안전한 사이트 등록</h2>
+          <p className="text-xs text-slate-500">
+            등록한 도메인과 하위 도메인은 검사 시 바로 &apos;안전&apos;으로 판정됩니다. 예: coupang.com → www.coupang.com, m.coupang.com 포함
+          </p>
+          <div className="flex gap-2">
+            <input
+              placeholder="도메인 또는 URL (예: coupang.com)"
+              value={safeDomain}
+              onChange={(e) => setSafeDomain(e.target.value)}
+              className="flex-1 bg-slate-800 border border-slate-700 text-white placeholder-slate-500 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-500"
+            />
+            <button type="submit" className="bg-green-700 hover:bg-green-600 text-white text-sm px-5 py-2 rounded-lg transition-colors">
+              안전으로 등록
+            </button>
+          </div>
+        </form>
+      )}
 
       {showAdd && (
         <form onSubmit={handleAdd} className="bg-slate-900 border border-slate-700 rounded-xl p-5 mb-6 space-y-3">
@@ -116,6 +176,7 @@ export default function AdminSitesPage() {
               <option value="confirmed_phishing">확정 피싱</option>
               <option value="suspicious">의심</option>
               <option value="malware">악성코드</option>
+              <option value="admin_safe">안전 (관리자)</option>
             </select>
             <input
               placeholder="위협 유형 (쉼표 구분)"
@@ -173,6 +234,7 @@ export default function AdminSitesPage() {
                       <option value="suspicious">의심</option>
                       <option value="malware">악성코드</option>
                       <option value="user_reported">제보</option>
+                      <option value="admin_safe">안전 (관리자)</option>
                     </select>
                   </td>
                   <td className="px-4 py-3 text-slate-500 text-xs max-w-[160px] truncate">
@@ -180,7 +242,15 @@ export default function AdminSitesPage() {
                   </td>
                   <td className="px-4 py-3 text-slate-500 text-xs">{s.source}</td>
                   <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">{timeAgo(s.created_at)}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    {s.category !== 'admin_safe' && (
+                      <button
+                        onClick={() => handleCategoryChange(s.id, 'admin_safe')}
+                        className="text-green-500 hover:text-green-300 transition-colors text-xs mr-3"
+                      >
+                        안전으로 분류
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDelete(s.id)}
                       className="text-slate-600 hover:text-red-400 transition-colors text-xs"

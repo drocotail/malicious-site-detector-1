@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { getAdminScans, AdminScan } from '@/lib/adminApi'
+import { getAdminScans, AdminScan, markSiteSafe, extractAdminError } from '@/lib/adminApi'
 
 const VERDICT_BADGE: Record<string, string> = {
   dangerous: 'bg-red-950 text-red-300 border border-red-800',
@@ -25,6 +25,18 @@ export default function AdminScansPage() {
   const [scans, setScans] = useState<AdminScan[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'dangerous' | 'suspicious' | 'safe'>('all')
+  const [marked, setMarked] = useState<Set<string>>(new Set())
+  const [notice, setNotice] = useState('')
+
+  const handleMarkSafe = async (s: AdminScan) => {
+    if (!confirm(`'${s.domain}'을(를) 안전한 사이트로 분류할까요?\n앞으로 이 도메인과 하위 도메인은 바로 '안전'으로 판정됩니다.`)) return
+    try {
+      setNotice(await markSiteSafe(s.domain, s.url))
+      setMarked((prev) => new Set(prev).add(s.domain))
+    } catch (err) {
+      setNotice(extractAdminError(err, '안전 분류에 실패했습니다.'))
+    }
+  }
 
   useEffect(() => {
     getAdminScans(0, 100)
@@ -59,6 +71,13 @@ export default function AdminScansPage() {
         ))}
       </div>
 
+      {notice && (
+        <div className="mb-4 flex items-center justify-between bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-4 py-2.5">
+          <span>{notice}</span>
+          <button onClick={() => setNotice('')} className="text-slate-500 hover:text-white">닫기</button>
+        </div>
+      )}
+
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
         {loading ? (
           <div className="text-center py-16 text-slate-500">불러오는 중...</div>
@@ -68,7 +87,7 @@ export default function AdminScansPage() {
           <table className="w-full text-sm">
             <thead className="border-b border-slate-800 bg-slate-900/80">
               <tr>
-                {['URL', '판정', '위험 점수', '위협 유형', '사용자', '시간'].map((h) => (
+                {['URL', '판정', '위험 점수', '위협 유형', '사용자', '시간', ''].map((h) => (
                   <th key={h} className="text-left text-slate-500 font-medium px-4 py-3">{h}</th>
                 ))}
               </tr>
@@ -94,6 +113,20 @@ export default function AdminScansPage() {
                     {s.user_id ? `#${s.user_id}` : '비로그인'}
                   </td>
                   <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">{timeAgo(s.scanned_at)}</td>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    {s.verdict !== 'safe' && (
+                      marked.has(s.domain) ? (
+                        <span className="text-green-500 text-xs">안전 분류됨</span>
+                      ) : (
+                        <button
+                          onClick={() => handleMarkSafe(s)}
+                          className="text-green-500 hover:text-green-300 transition-colors text-xs"
+                        >
+                          안전으로 분류
+                        </button>
+                      )
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

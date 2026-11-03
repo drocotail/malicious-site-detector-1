@@ -65,6 +65,7 @@ _API_DANGER_CUTOFF = 30
 # ── ML+도메인 합산 점수 체계 임계값 ───────────────────────────────────────────
 _ML_DOMAIN_DANGER = 70   # combined_risk ≥ 이 값 → 위험
 _ML_DOMAIN_SUSPICIOUS = 25  # combined_risk ≥ 이 값 → 의심
+ADMIN_SAFE = "admin_safe"  # 관리자가 '안전'으로 분류한 사이트의 category 값
 _ML_WEIGHT = 0.5  # ML 점수 반영 비율 (ml_score ≥ 70일 때만 적용)
 _LONG_URL_SCORE = 5  # 긴 URL(쿼리 제외 120자 초과) 가산점 (기존 10)
 
@@ -86,6 +87,19 @@ async def scan_url(url: str, db: Session) -> dict:
             "safe", 5, [],
             {
                 "source": "whitelist", "domain": domain,
+                "safe_browsing": {"skipped": True},
+                "phishtank": {"skipped": True},
+                "virustotal": {"skipped": True},
+            },
+        )
+
+    # Step 1-2: 관리자가 '안전'으로 분류한 사이트 (서브도메인 포함) → 즉시 안전
+    safe_entry = _admin_safe_match(domain, db)
+    if safe_entry:
+        return _verdict(
+            "safe", 0, [],
+            {
+                "source": "admin_safe", "domain": safe_entry.domain,
                 "safe_browsing": {"skipped": True},
                 "phishtank": {"skipped": True},
                 "virustotal": {"skipped": True},
@@ -233,6 +247,23 @@ async def scan_url(url: str, db: Session) -> dict:
     return _verdict("safe", max(api_risk_score, 0), [], details)
 
 
+def _strip_www(domain: str) -> str:
+    return domain.lower().strip().removeprefix("www.")
+
+
+def _admin_safe_match(domain: str, db: Session) -> MaliciousSite | None:
+    """관리자가 안전으로 분류한 도메인과 일치하거나 그 하위 도메인이면 해당 항목을 반환.
+
+    예: coupang.com 을 안전으로 분류하면 www.coupang.com, m.coupang.com 도 안전.
+    """
+    target = _strip_www(domain)
+    for site in db.query(MaliciousSite).filter(MaliciousSite.category == ADMIN_SAFE).all():
+        base = _strip_www(site.domain)
+        if base and (target == base or target.endswith("." + base)):
+            return site
+    return None
+
+
 def _lookup_db(domain: str, db: Session) -> dict | None:
     site = db.query(MaliciousSite).filter(MaliciousSite.domain == domain).first()
     if site:
@@ -247,6 +278,8 @@ def _lookup_db(domain: str, db: Session) -> dict | None:
 
 def _save_to_db(url, domain, category, source, threat_types, db):
     existing = db.query(MaliciousSite).filter(MaliciousSite.domain == domain).first()
+    if existing and existing.category == ADMIN_SAFE:
+        return  # 관리자가 안전으로 분류한 사이트는 자동 판정으로 덮어쓰지 않음
     if not existing:
         db.add(MaliciousSite(
             url=url, domain=domain, category=category, source=source,

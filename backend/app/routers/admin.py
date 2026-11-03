@@ -45,6 +45,28 @@ class SiteUpdate(BaseModel):
     threat_types: list[str] | None = None
 
 
+class MarkSafe(BaseModel):
+    domain: str
+    url: str | None = None
+
+
+ADMIN_SAFE = "admin_safe"
+VALID_CATEGORIES = {"confirmed_phishing", "suspicious", "malware", "user_reported", ADMIN_SAFE}
+
+
+def _check_category(category: str) -> None:
+    if category not in VALID_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"알 수 없는 분류입니다: {category}")
+
+
+def _normalize_domain(value: str) -> str:
+    """'https://www.Coupang.com/path' 처럼 들어와도 'coupang.com' 형태로 정리."""
+    v = value.strip().lower()
+    if "://" in v:
+        v = extract_domain(v)
+    return v.split("/")[0].split(":")[0].removeprefix("www.")
+
+
 class ReportReview(BaseModel):
     action: str  # "approve" | "reject"
 
@@ -98,6 +120,7 @@ def admin_stats(db: Session = Depends(get_db), _: Admin = Depends(get_current_ad
         "safe": db.query(ScanHistory).filter(ScanHistory.verdict == "safe").count(),
         "total_sites": db.query(MaliciousSite).count(),
         "confirmed_phishing": db.query(MaliciousSite).filter(MaliciousSite.category == "confirmed_phishing").count(),
+        "admin_safe": db.query(MaliciousSite).filter(MaliciousSite.category == ADMIN_SAFE).count(),
         "total_users": db.query(User).count(),
         "blocked_users": db.query(User).filter(User.is_blocked == True).count(),
         "pending_reports": db.query(Report).filter(Report.status == "pending").count(),
@@ -278,6 +301,9 @@ def admin_add_site(
     db: Session = Depends(get_db),
     _: Admin = Depends(get_current_admin),
 ):
+    _check_category(body.category)
+    if body.category == ADMIN_SAFE:
+        return _mark_safe(body.domain, body.url, db)
     existing = db.query(MaliciousSite).filter(MaliciousSite.domain == body.domain).first()
     if existing:
         raise HTTPException(status_code=400, detail="이미 등록된 도메인입니다.")
@@ -306,13 +332,59 @@ def admin_update_site(
     if not site:
         raise HTTPException(status_code=404, detail="사이트를 찾을 수 없습니다.")
     if body.category is not None:
+        _check_category(body.category)
         site.category = body.category
-        if body.category == "confirmed_phishing" and not site.confirmed_at:
+        if body.category == ADMIN_SAFE:
+            site.source = "admin"
+            site.threat_types = []
+            site.confirmed_at = None
+        elif body.category == "confirmed_phishing" and not site.confirmed_at:
             site.confirmed_at = datetime.utcnow()
     if body.threat_types is not None:
         site.threat_types = body.threat_types
     db.commit()
     return {"message": "업데이트되었습니다."}
+
+
+def _mark_safe(domain_input: str, url: str | None, db: Session) -> dict:
+    """도메인을 '안전'으로 분류. 이미 위협·의심으로 등록돼 있으면 그 항목을 안전으로 전환."""
+    domain = _normalize_domain(domain_input)
+    if not domain or "." not in domain:
+        raise HTTPException(status_code=400, detail="올바른 도메인을 입력하세요. 예: coupang.com")
+    # www 유무와 상관없이 같은 도메인으로 등록된 항목을 모두 정리
+    rows = db.query(MaliciousSite).filter(
+        MaliciousSite.domain.in_([domain, "www." + domain])
+    ).all()
+    site = rows[0] if rows else None
+    for extra in rows[1:]:
+        db.delete(extra)
+    if site:
+        site.domain = domain
+        site.category = ADMIN_SAFE
+        site.source = "admin"
+        site.threat_types = []
+        site.confirmed_at = None
+        if url:
+            site.url = url
+    else:
+        site = MaliciousSite(
+            url=url or f"https://{domain}", domain=domain,
+            category=ADMIN_SAFE, source="admin", threat_types=[],
+        )
+        db.add(site)
+    db.commit()
+    db.refresh(site)
+    return {"message": f"'{domain}'을(를) 안전한 사이트로 분류했습니다. 하위 도메인도 함께 안전으로 판정됩니다.", "id": site.id}
+
+
+@router.post("/sites/mark-safe")
+def admin_mark_safe(
+    body: MarkSafe,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(get_current_admin),
+):
+    """스캔 이력 등에서 오탐된 사이트를 한 번에 '안전'으로 분류."""
+    return _mark_safe(body.domain, body.url, db)
 
 
 @router.delete("/sites/{site_id}", status_code=status.HTTP_204_NO_CONTENT)

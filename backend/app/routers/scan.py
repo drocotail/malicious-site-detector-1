@@ -75,6 +75,8 @@ def _transform_response(
     # final_reason 생성
     if details.get("source") == "whitelist":
         final_reason = f"공식 화이트리스트 도메인입니다: {details.get('domain', '')}"
+    elif details.get("source") == "admin_safe":
+        final_reason = f"관리자가 안전한 사이트로 분류했습니다: {details.get('domain', '')}"
     elif details.get("source") == "internal_db":
         final_reason = "자체 DB에 등록된 위협 사이트입니다."
     elif pt.get("is_phishing"):
@@ -87,6 +89,8 @@ def _transform_response(
     # decision_type
     if details.get("source") == "whitelist":
         decision_type = "official_domain_allowlist"
+    elif details.get("source") == "admin_safe":
+        decision_type = "admin_allowlist"
     elif details.get("source") == "internal_db":
         decision_type = "internal_db"
     elif not sb.get("is_safe", True) or not vt.get("is_safe", True) or pt.get("is_phishing"):
@@ -234,7 +238,7 @@ def scan_stats(db: Session = Depends(get_db)):
     total = db.query(ScanHistory).count()
     dangerous = db.query(ScanHistory).filter(ScanHistory.verdict == "dangerous").count()
     suspicious = db.query(ScanHistory).filter(ScanHistory.verdict == "suspicious").count()
-    db_entries = db.query(MaliciousSite).count()
+    db_entries = db.query(MaliciousSite).filter(MaliciousSite.category != "admin_safe").count()
     return {
         "total_scans": total,
         "dangerous_detected": dangerous,
@@ -277,6 +281,7 @@ def scan_history(
 def recent_sites(limit: int = 10, db: Session = Depends(get_db)):
     sites = (
         db.query(MaliciousSite)
+        .filter(MaliciousSite.category != "admin_safe")  # 안전 분류 사이트는 위협 목록에서 제외
         .order_by(MaliciousSite.created_at.desc())
         .limit(min(limit, 50))
         .all()
@@ -351,6 +356,7 @@ def report_url(
 def recent_threats(limit: int = 10, db: Session = Depends(get_db)):
     sites = (
         db.query(MaliciousSite)
+        .filter(MaliciousSite.category != "admin_safe")  # 안전 분류 사이트는 위협 목록에서 제외
         .order_by(MaliciousSite.created_at.desc())
         .limit(min(limit, 50))
         .all()

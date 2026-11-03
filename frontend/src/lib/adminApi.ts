@@ -163,6 +163,12 @@ export const updateAdminSite = async (id: number, category: string): Promise<voi
   await adminApi.patch(`/api/admin/sites/${id}`, { category })
 }
 
+/** 도메인을 '안전'으로 분류 (하위 도메인 포함). 이미 위협으로 등록돼 있으면 안전으로 전환 */
+export const markSiteSafe = async (domain: string, url?: string): Promise<string> => {
+  const { data } = await adminApi.post('/api/admin/sites/mark-safe', { domain, url })
+  return data.message
+}
+
 export const deleteAdminSite = async (id: number): Promise<void> => {
   await adminApi.delete(`/api/admin/sites/${id}`)
 }

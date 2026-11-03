@@ -9,7 +9,7 @@ class MaliciousSite(Base):
     id = Column(Integer, primary_key=True, index=True)
     url = Column(String, nullable=False)
     domain = Column(String, nullable=False, index=True)
-    # confirmed_phishing | suspicious | malware | user_reported
+    # confirmed_phishing | suspicious | malware | user_reported | admin_safe(관리자가 안전으로 분류)
     category = Column(String, nullable=False)
     # api_detection | auto_detected | user_reported
     source = Column(String, nullable=False)
